@@ -226,8 +226,10 @@ def cost(usage, m):
     in_audio, out_audio = pd.get('audio_tokens', 0), cd.get('audio_tokens', 0)
     in_txt  = raw['prompt_tokens']     - cached - in_audio
     out_txt = raw['completion_tokens'] - out_audio
-    cost  = in_txt  * m.input_cost_per_token  + out_txt * m.output_cost_per_token
-    cost += cached  * m.get('cache_read_input_token_cost', 0)
+    tier = price_tier(m, raw['prompt_tokens'])
+    cost  = in_txt  * tier_rate(m, 'input_cost_per_token', tier)
+    cost += out_txt * tier_rate(m, 'output_cost_per_token', tier)
+    cost += cached  * tier_rate(m, 'cache_read_input_token_cost', tier, 0)
     cost += in_audio  * m.get('input_cost_per_audio_token', 0)
     cost += out_audio * m.get('output_cost_per_audio_token', 0)
     return cost
