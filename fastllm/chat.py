@@ -20,6 +20,7 @@ from aidialog.msg_parts import (Msg, Part, PartType, Text, Thinking, ToolUse, to
     StopResponse, ToolResponse, display_list, fmt2hist, hist2fmt, mk_result_fence, split_fence_msgs, extract_fence_call,
     trunc_str, Completion, mk_msg, mk_msgs)
 from .acomplete import *
+from .opencode import opencode_headers
 from .streaming import FenceToolStop, stop_sequences
 
 # %% ../nbs/07_chat.ipynb #48c78e48
@@ -181,7 +182,8 @@ class AsyncChat:
         markup=0,                 # Cost markup multiplier (e.g. 0.5 for 50%)
         showthink=False,          # Stamp streamed thinking parts to display their text rather than 🧠 glyphs
         cbs:list=None,            # Chat callbacks
-        default_cbs=True          # Whether to include default callbacks
+        default_cbs=True,         # Whether to include default callbacks
+        session_id=None           # Stable provider session id; defaults to `prompt_cache_key`
     ):
         "LiteLLM chat client."
         if not vendor_name and not api_name and not (base_url and (api_key or oauth_token)):
@@ -202,6 +204,7 @@ class AsyncChat:
         self.cbs = L()
         if default_cbs: self.add_cbs(defaults.chat_callbacks)
         self.add_cbs(cbs)
+        self.session_id = session_id or self.prompt_cache_key
     
     def _prep_msg(self, msg=None):
         "Prepare the system prompt and messages list for the API call"
@@ -260,6 +263,7 @@ def _prep_call(self:AsyncChat, search, max_tokens, kwargs, stream=False, think=N
     if self.endpoint:      kwargs['endpoint'] = self.endpoint
     if self.extra_headers: kwargs['xtra_hdrs'] = self.extra_headers
     kwargs.setdefault('prompt_cache_key', self.prompt_cache_key)
+    if self.vendor_name == 'opencode_go': kwargs['req_hdrs'] = opencode_headers(self.session_id, kwargs.get('req_hdrs'))
     kwargs.update(_think_kw(self.model, think, self.vendor_name))
     return max_tokens
 

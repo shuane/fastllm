@@ -114,7 +114,7 @@ async def provider_req(
     body, # JSON request body
     params=None, # Query parameters
     stream=False, # Return an async generator of SSE events instead of the decoded response?
-    headers=None, # Extra headers for this request
+    headers=None, # Headers for this request only, merged over the client's base headers
 ):
     "POST `body` to `path` on `cli`: the decoded response, or SSE events when `stream`"
     url = cli._url(path)

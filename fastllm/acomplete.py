@@ -14,6 +14,7 @@ from fasttransport.errors import APIError
 
 from .types import *
 from .codex import codex_auth_path
+from .opencode import resolve_opencode_go
 from aidialog.msg_parts import (Part, PartType, Msg, Text, Thinking, ToolUse, ToolResult, InputImage, InputAudio, InputVideo,
     InputFile, mk_tool_res_msg, Completion)
 from .streaming import *
@@ -42,6 +43,8 @@ vendor_mapping = {
     "minimax":      ('anthropic', "https://api.minimax.io/anthropic", "MINIMAX_API_KEY"),
     "meta":         ('openai_chat', "https://api.meta.ai/v1", "META_API_KEY"),
     "zai":          ('openai_chat', "https://api.z.ai/api/paas/v4", "ZAI_API_KEY")}
+
+vendor_mapping["opencode_go"] = resolve_opencode_go
 
 # %% ../nbs/06_acomplete.ipynb #e3ed40fb
 def split_vendor(model):
@@ -77,7 +80,9 @@ def mk_client(model=None, vendor_name=None, api_name=None, api_key=None, oauth_t
     if vendor_name:
         override_base_url = base_url
         try:
-            api_name, base_url, env_api_nm, *auth_json = vendor_mapping[vendor_name]
+            spec = vendor_mapping[vendor_name]
+            if callable(spec): spec = spec(model)
+            api_name, base_url, env_api_nm, *auth_json = spec
             base_url = override_base_url or base_url
             if auth_json and not api_key and not oauth_token and not os.getenv(env_api_nm):
                 fn,keys = auth_json[0]  # pyright: ignore[reportAssignmentType]
@@ -157,7 +162,7 @@ async def _retry_stream(mk_gen, retries=2, retry_delay=0.5):
 # %% ../nbs/06_acomplete.ipynb #2379ec94
 @delegates(payload_kwargs)
 async def acomplete(msgs, model, api_name=None, vendor_name=None, api_key=None, oauth_token=None, base_url=None, endpoint=None, xtra_body=None, xtra_hdrs=None,
-    stream=False, previous_response_id=None, stop_callables=None, retries=2, retry_delay=0.5, **kwargs):
+    req_hdrs=None, stream=False, previous_response_id=None, stop_callables=None, retries=2, retry_delay=0.5, **kwargs):
     "Unified completion across different APIs."
     if api_key and oauth_token: raise ValueError('Pass `api_key` or `oauth_token`, not both: a request has one identity')
     if not vendor_name and not api_name and not (base_url and (api_key or oauth_token)):
@@ -168,7 +173,7 @@ async def acomplete(msgs, model, api_name=None, vendor_name=None, api_key=None, 
     if own:
         vendor_name = ifnone(vendor_name, api_name)  # an own-transport api: no HTTP client to build
         if oauth_token: kwargs['oauth_token'] = oauth_token  # its `mk_payload` applies the user's token itself
-    else: cli, api_name, vendor_name = mk_client(model=model, vendor_name=vendor_name, api_name=api_name, api_key=api_key, oauth_token=oauth_token, base_url=base_url)
+    else: cli, api_name, vendor_name = mk_client(model=model, vendor_name=vendor_name, api_name=api_name, api_key=api_key, oauth_token=oauth_token, base_url=base_url, xtra_hdrs=xtra_hdrs)
     api = api_registry[api_name]
     if previous_response_id is not None:
         if not getattr(api, 'supports_previous_response_id', False):
@@ -181,6 +186,7 @@ async def acomplete(msgs, model, api_name=None, vendor_name=None, api_key=None, 
         headers = xtra_hdrs or {}
         if vendor_name == 'codex' and (key := body.get('prompt_cache_key')):
             if not any(k.lower() == 'session-id' for k in headers): headers = {**headers, 'session-id':key}
+        headers = {**headers, **ifnone(req_hdrs, {})}
         ep = endpoint or api.endpoint
         path,params = ep(model, stream) if callable(ep) else (ep, None)
     if defaults.debug_mode: _debug_print(model, api_name, vendor_name, body, None if own else cli._url(path))
