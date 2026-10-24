@@ -2,8 +2,13 @@ project:
   output-dir: _docs
 
 website:
-  title: "fastllm"
+  title: "python-fastllm"
   site-url: "/"
   description: ""
   repo-branch: main
   repo-url: "https://github.com/AnswerDotAI/fastllm"
+
+format-links:
+  - html
+  - format: commonmark
+    text: Markdown

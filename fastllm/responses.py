@@ -16,12 +16,13 @@ __all__ = ['ResponsesError', 'response_input', 'normalize_call_ids', 'server_cal
            'pending_response']
 
 # %% ../nbs/06a_responses.ipynb #e16fc24e
-import asyncio, copy, json, secrets, time
+import asyncio, copy, json, secrets, time, uuid
 from fastcore.utils import *
 from fastcore.funccall import call_func_async, get_schema
 from fasttransport.errors import APIError
 
 from .acomplete import acomplete
+from .opencode import opencode_headers
 from .streaming import Status
 from aidialog.msg_parts import Msg, Text, ToolUse, ToolResult, InputImage, InputFile, Completion, MdStr, tool_text, msg2dict, dict2msg
 
@@ -152,19 +153,20 @@ def response_object(rid, body, comp, previous_response_id=None, created_at=None)
 # %% ../nbs/06a_responses.ipynb #73a2fc16
 class ResponseState(BasicRepr):
     "Canonical history and optional provider continuation metadata."
-    def __init__(self, id, model, history, provider_response_id=None, prompt_cache_key=None): store_attr()
+    def __init__(self, id, model, history, provider_response_id=None, prompt_cache_key=None, session_id=None): store_attr()
 
 # %% ../nbs/06a_responses.ipynb #b28fa30d
 @patch
 def to_dict(self:ResponseState):
     "This state as a JSON-ready dict"
     return dict(id=self.id, model=self.model, history=[msg2dict(m) for m in self.history],
-        provider_response_id=self.provider_response_id, prompt_cache_key=self.prompt_cache_key)
+        provider_response_id=self.provider_response_id, prompt_cache_key=self.prompt_cache_key, session_id=self.session_id)
 
 @patch(cls_method=True)
 def from_dict(cls:ResponseState, d):
     "The state `to_dict` produced `d` from"
-    return cls(d['id'], d['model'], tuple(dict2msg(m) for m in d['history']), d['provider_response_id'], d['prompt_cache_key'])
+    return cls(d['id'], d['model'], tuple(dict2msg(m) for m in d['history']), d.get('provider_response_id'),
+        d.get('prompt_cache_key'), d.get('session_id'))
 
 # %% ../nbs/06a_responses.ipynb #74e09d18
 class ResponseStore:
@@ -195,7 +197,7 @@ class ResponseStore:
 # %% ../nbs/06a_responses.ipynb #c9ca3744
 class ResponseTurn(BasicRepr):
     "A prepared Responses request for one provider call."
-    def __init__(self, id, created_at, body, history, provider_messages, system='', previous=None, server_tools=None, call_kwargs=None):
+    def __init__(self, id, created_at, body, history, provider_messages, system='', previous=None, server_tools=None, call_kwargs=None, session_id=None):
         store_attr()
         if server_tools is None: self.server_tools = {}
         if call_kwargs is None: self.call_kwargs = {}
@@ -203,12 +205,11 @@ class ResponseTurn(BasicRepr):
     @property
     def provider_previous_id(self): return self.previous.provider_response_id if self.previous else None
 
-
 # %% ../nbs/06a_responses.ipynb #a648297f
 class AsyncResponses:
     "Run individual Responses turns over FastLLM."
     def __init__(self): self.tasks = set()   # served turns still running
-    def prepare(self, body, previous=None, server_tools=None, **kwargs):
+    def prepare(self, body, previous=None, server_tools=None, session_id=None, **kwargs):
         if not isinstance(body, dict): raise ResponsesError('Request body must be an object')
         model = body.get('model')
         if not model: raise ResponsesError('model is required', param='model')
@@ -224,11 +225,26 @@ class AsyncResponses:
         provider_messages = new_msgs if previous and previous.provider_response_id else list(history)
         key = body.get('prompt_cache_key') or (previous.prompt_cache_key if previous else None) or secrets.token_hex(16)
         body = body | dict(prompt_cache_key=key)
+        is_go = kwargs.get('vendor_name') == 'opencode_go' or model.startswith('opencode_go/')
+        if is_go:
+            if previous:
+                if session_id is not None and session_id != previous.session_id:
+                    raise ResponsesError('session_id must match the previous response', param='session_id')
+                session_id = previous.session_id
+            else: session_id = session_id or str(uuid.uuid4())
+        else: session_id = None
         return ResponseTurn(_new_id('resp'), int(time.time()), body, history, provider_messages, instructions, previous,
-            {f.__name__: f for f in server_tools or []}, kwargs)
-
+            {f.__name__: f for f in server_tools or []}, kwargs, session_id)
 
 # %% ../nbs/06a_responses.ipynb #373f7d5e
+def _provider_kwargs(turn, kwargs):
+    "Finalize per-call kwargs, including conversation-scoped OpenCode headers."
+    result = {**kwargs, **turn.call_kwargs}
+    if turn.session_id is not None:
+        result['req_hdrs'] = opencode_headers(turn.session_id, turn.call_kwargs.get('req_hdrs'))
+    return result
+
+
 @patch
 async def call(self:AsyncResponses, turn):
     "Start the provider stream for a prepared turn, having received its first chunk; the turn's `call_kwargs` reach `acomplete`"
@@ -239,13 +255,12 @@ async def call(self:AsyncResponses, turn):
     kwargs.update(prompt_cache_key=body['prompt_cache_key'], tool_choice=body.get('tool_choice'), parallel_tool_calls=body.get('parallel_tool_calls', True),
         reasoning_effort=reasoning.get('effort'), max_tokens=body.get('max_output_tokens'), temperature=body.get('temperature'),
         cache_idxs=body.get('cache_idxs'), ttl=body.get('ttl'), web_search_options=body.get('web_search_options'))
-    stream = await acomplete(turn.provider_messages, model=body['model'], stream=True, **kwargs, **turn.call_kwargs)
+    stream = await acomplete(turn.provider_messages, model=body['model'], stream=True, **_provider_kwargs(turn, kwargs))
     first = await anext(stream)
     async def _rest():
         yield first
         async for o in stream: yield o
     return _rest()
-
 
 # %% ../nbs/06a_responses.ipynb #4f424285
 @patch
@@ -253,8 +268,7 @@ def state(self:AsyncResponses, turn, comp, results=()):
     "Build the next continuation state; `results` are server tool results answering `comp`'s calls."
     normalize_call_ids(comp)
     history = (*turn.history, comp.message, *([Msg('tool', list(results))] if results else []))
-    return ResponseState(turn.id, turn.body['model'], history, comp.response_id, turn.body['prompt_cache_key'])
-
+    return ResponseState(turn.id, turn.body['model'], history, comp.response_id, turn.body['prompt_cache_key'], turn.session_id)
 
 # %% ../nbs/06a_responses.ipynb #7615b274
 @patch

@@ -1,0 +1,15 @@
+website:
+  sidebar:
+    contents:
+      - index.ipynb
+      - 00_types.ipynb
+      - 01_streaming.ipynb
+      - 02_oai_responses.ipynb
+      - 03_oai_chat.ipynb
+      - 04_anthropic.ipynb
+      - 05_codex.ipynb
+      - 05_gemini.ipynb
+      - 06_acomplete.ipynb
+      - 06a_responses.ipynb
+      - 07_chat.ipynb
+      - 08_opencode.ipynb

@@ -272,7 +272,7 @@ def resolve_effort(levels, effort):
 register_model_info('deepseek-flash', vendor_name='deepseek', base='deepseek-v4-flash',
     supports_native_structured_output=True, supports_vision=True, supports_image_input=True,
     reasoning_effort_levels=['low', 'high', 'max'], input_cost_per_token=0.15e-6,
-    input_cost_per_token_cache_hit=0.003e-6, cache_read_input_token_cost=0.003e-6, output_cost_per_token=0.6e-6)
+    input_cost_per_token_cache_hit=0.003e-6, cache_read_input_token_cost=0.003e-6, output_cost_per_token=0.6e-6, peak_price_multiplier=2)
 
 mimo_v25_common = dict(**modern_llm, supports_web_search=True, max_input_tokens=1048576, max_output_tokens=131072, max_tokens=131072)
 
@@ -283,6 +283,104 @@ register_model_info('mimo-v2.5', vendor_name='mimo', **mimo_v25_common, base='de
     supports_vision=True, supports_image_input=True)
 register_model_info('mimo-v2.5-pro-ultraspeed', vendor_name='mimo', **mimo_v25_common, base='deepseek-v4-pro', base_vendor_name='deepseek',
     input_cost_per_token=1.305e-6, output_cost_per_token=2.61e-6, cache_read_input_token_cost=0.0108e-6, search_context_cost_per_query=0.005)
+
+# %% ../nbs/00_types.ipynb #d34f24ce
+# OpenCode Go model metadata. Routes live in fastllm.opencode; this registers the model facts. Limits/capabilities
+# are inherited from each model's originating provider: OpenCode Go's published pricing tracks the creator's rates,
+# not the serving host's (e.g. GLM matches zai's cache rate, not Fireworks'; DeepSeek V4 Pro matches DeepSeek's off-
+# peak rate). PROVISIONAL: Go may serve different limits than the origin; revisit against observed behaviour.
+# Source for pricing, routes, and the current model list: https://opencode.ai/docs/go/ (fetched 2026-09-19).
+for _m, _base, _vnd in [
+    ('grok-4.6', 'grok-4.6', 'xai'),                                    # Responses routes (4 models)
+    ('gpt-5.6-luna', 'gpt-5.6-luna', 'openai'),
+    ('muse-spark-1.3-contributor', 'muse-spark-1.3-contributor', 'meta'),
+    ('muse-spark-1.2-contributor', 'muse-spark-1.2-contributor', 'meta'),
+    ('glm-5.3-flash', 'glm-5.3-flash', 'zai'),                          # Chat Completions routes (16 models)
+    ('glm-5.3', 'glm-5.3', 'zai'),
+    ('glm-5.2', 'glm-5.2', 'zai'),
+    ('glm-5.1', 'glm-5.1', 'zai'),
+    ('kimi-k3', 'kimi-k3', 'moonshot'),
+    ('kimi-k2.7-code', 'kimi-k2.7-code', 'moonshot'),
+    ('kimi-k2.6', 'kimi-k2.6', 'moonshot'),
+    ('deepseek-v4.1-flash', 'deepseek-flash', 'deepseek'),  # DeepSeek reuses model IDs across API generations
+    ('deepseek-v4-pro', 'deepseek-v4-pro', 'deepseek'),
+    ('deepseek-v4-flash', 'deepseek-v4-flash', 'deepseek'),
+    ('deepseek-v4-flash-vision-exp', 'deepseek-v4-flash-vision-exp', 'deepseek'),
+    ('mimo-v2.5', 'mimo-v2.5', 'openrouter/xiaomi'),
+    ('mimo-v2.5-pro', 'mimo-v2.5-pro', 'openrouter/xiaomi'),
+    ('hy4-preview', 'hy3', 'novita/tencent'),                           # hy4 is the successor to hy3
+    ('hy3', 'hy3', 'novita/tencent'),
+    ('minimax-m2.7', 'minimax-m2.7', 'openrouter/minimax'),             # Messages routes (7 models total)
+    ('qwen3.8-max', 'qwen3.8-max', 'dashscope'),
+    ('qwen3.8-flash', 'qwen3.8-flash', 'openrouter/qwen'),
+    ('qwen3.7-max', 'qwen3.7-max', 'dashscope'),
+    ('qwen3.7-plus', 'qwen3.7-plus', 'dashscope'),
+    ('qwen3.6-plus', 'qwen3.6-plus', 'openrouter/qwen'),
+]: register_model_info(_m, vendor_name='opencode_go', base=_base, base_vendor_name=_vnd, **modern_llm)
+
+# MiniMax M3 publishes no upstream output limit; Fireworks and OpenRouter both report 512K output tokens.
+register_model_info('minimax-m3', vendor_name='opencode_go', base='minimax-m3', base_vendor_name='tencent',
+    **modern_llm, max_output_tokens=512_000, max_tokens=512_000)
+
+# LongCat-2.0 has no LiteLLM entry; facts taken from https://longcat.chat/platform/docs/api/model instead.
+register_model_info('longcat-2.0', vendor_name='opencode_go', **modern_llm,
+    max_input_tokens=1048576, max_output_tokens=131072, max_tokens=131072, supports_vision=False)
+
+# %% ../nbs/00_types.ipynb #73b3de59
+# OpenCode Go pricing, per token, transcribed from https://opencode.ai/docs/go/.
+# The rates below are the off-peak/base prices; DeepSeek's four entries carry `peak_price_multiplier` instead.
+# Each model's inherited origin costs are cleared first, so the Go table is the single pricing source.
+_opencode_pricing = [
+    # model, input, output, cached read, cached write (None when Go publishes no cached-write rate)
+    ('grok-4.6', 2.00, 6.00, 0.50, None),
+    ('gpt-5.6-luna', 0.20, 1.20, 0.02, 0.25),
+    ('muse-spark-1.3-contributor', 0.10, 0.20, 0.002, None),
+    ('muse-spark-1.2-contributor', 0.10, 0.20, 0.002, None),
+    ('glm-5.3-flash', 0.15, 0.50, 0.03, None),
+    ('glm-5.3', 1.40, 4.40, 0.26, None),
+    ('glm-5.2', 1.40, 4.40, 0.26, None),
+    ('glm-5.1', 1.40, 4.40, 0.26, None),
+    ('kimi-k3', 3.00, 15.00, 0.30, None),
+    ('kimi-k2.7-code', 0.95, 4.00, 0.19, None),
+    ('kimi-k2.6', 0.95, 4.00, 0.16, None),
+    ('longcat-2.0', 0.30, 1.20, 0.006, None),
+    ('deepseek-v4.1-flash', 0.15, 0.60, 0.003, None),
+    ('deepseek-v4-pro', 0.66, 1.98, 0.022, None),
+    ('deepseek-v4-flash', 0.15, 0.60, 0.003, None),
+    ('deepseek-v4-flash-vision-exp', 0.15, 0.60, 0.003, None),
+    ('mimo-v2.5', 0.14, 0.28, 0.0028, None),
+    ('mimo-v2.5-pro', 0.435, 0.87, 0.003625, None),
+    ('hy4-preview', 0.834, 2.501, 0.042, None),
+    ('hy3', 0.14, 0.58, 0.035, None),
+    ('minimax-m3', 0.30, 1.20, 0.06, None),
+    ('minimax-m2.7', 0.30, 1.20, 0.06, 0.375),
+    ('qwen3.8-max', 2.00, 6.00, 0.25, 2.50),
+    ('qwen3.8-flash', 0.15, 0.47, 0.016, 0.20),
+    ('qwen3.7-max', 2.50, 7.50, 0.50, 3.125),
+    ('qwen3.7-plus', 0.40, 1.60, 0.04, 0.50),
+    ('qwen3.6-plus', 0.50, 3.00, 0.05, 0.625),
+]
+for _m, _i, _o, _r, _w in _opencode_pricing:
+    _info = model_info_registry['opencode_go', _m]
+    for _k in [k for k in _info if 'cost' in k]: del _info[_k]
+    _info.update(input_cost_per_token=_i*1e-6, output_cost_per_token=_o*1e-6,
+        cache_read_input_token_cost=_r*1e-6, cache_creation_input_token_cost=(_w or 0)*1e-6)
+
+# Long-prompt tiers apply through Responses, Chat Completions, and Messages; each adapter selects the published rate.
+register_model_info('grok-4.6', 'opencode_go', base='grok-4.6', input_cost_per_token_above_200k_tokens=4.00e-6,
+    output_cost_per_token_above_200k_tokens=12.00e-6, cache_read_input_token_cost_above_200k_tokens=1.00e-6)
+register_model_info('gpt-5.6-luna', 'opencode_go', base='gpt-5.6-luna', input_cost_per_token_above_272k_tokens=0.40e-6,
+    output_cost_per_token_above_272k_tokens=1.80e-6, cache_read_input_token_cost_above_272k_tokens=0.04e-6)
+register_model_info('qwen3.7-plus', 'opencode_go', base='qwen3.7-plus', input_cost_per_token_above_256k_tokens=1.20e-6,
+    output_cost_per_token_above_256k_tokens=4.80e-6, cache_read_input_token_cost_above_256k_tokens=0.12e-6,
+    cache_creation_input_token_cost_above_256k_tokens=1.50e-6)
+register_model_info('qwen3.6-plus', 'opencode_go', base='qwen3.6-plus', input_cost_per_token_above_256k_tokens=2.00e-6,
+    output_cost_per_token_above_256k_tokens=6.00e-6, cache_read_input_token_cost_above_256k_tokens=0.20e-6,
+    cache_creation_input_token_cost_above_256k_tokens=2.50e-6)
+
+# DeepSeek's four Go models publish off-peak as the base rate; the shared weekday peak windows double every rate.
+for _m in ('deepseek-v4.1-flash', 'deepseek-v4-pro', 'deepseek-v4-flash', 'deepseek-v4-flash-vision-exp'):
+    register_model_info(_m, 'opencode_go', base=_m, peak_price_multiplier=2)
 
 # %% ../nbs/00_types.ipynb #defb1c5c
 register_model_info('MiniMax-M3', vendor_name='minimax', **modern_llm, max_input_tokens=512_000, max_output_tokens=512_000, max_tokens=512_000,
@@ -354,9 +452,9 @@ def price_tier(meta, n):
     return o[1] if o and n>int(o[2])*1000 else ''
 
 # %% ../nbs/00_types.ipynb #956d2495
-def tier_rate(meta, key, tier):
-    "Rate for `key` at `tier`, falling back to the base key."
-    return meta.get(f'{key}{tier}') or meta[key]
+def tier_rate(meta, key, tier, default=None):
+    "Rate for `key` at `tier`, falling back to the base key, then `default`."
+    return meta.get(f'{key}{tier}') or meta.get(key, default)
 
 # %% ../nbs/00_types.ipynb #8bfca02d
 @patch(as_prop=True)
@@ -368,4 +466,4 @@ def cost(self:Completion):
     if not hasattr(api, 'cost'): raise NotImplementedError(f"API: {self.api_name} doesn't have a registered `cost` function in ns")
     res = api.cost(self.usage, meta)
     if (n := self.usage.search_queries) and (rates := meta.get('search_context_cost_per_query')): res += n * rates['search_context_size_medium']
-    return res*2 if self.vendor_name=='deepseek' and self.model=='deepseek-flash' and is_deepseek_peak_hour() else res
+    return res * meta.get('peak_price_multiplier', 1) if is_deepseek_peak_hour() else res

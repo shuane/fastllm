@@ -363,11 +363,12 @@ def cost(usage, m):
     cc = raw.get('cache_creation', {}) or {}
     cache_5m  = cc.get('ephemeral_5m_input_tokens', raw.get('cache_creation_input_tokens', 0))
     cache_1h  = cc.get('ephemeral_1h_input_tokens', 0)
-    cost  = in_tok     * m.input_cost_per_token
-    cost += raw['output_tokens'] * m.output_cost_per_token
-    cost += cache_read * m.get('cache_read_input_token_cost', 0)
-    cost += cache_5m   * m.get('cache_creation_input_token_cost', 0)
-    cost += cache_1h   * m.get('cache_creation_input_token_cost_above_1hr', 0)
+    tier = price_tier(m, in_tok + cache_read + cache_5m + cache_1h)
+    cost  = in_tok * tier_rate(m, 'input_cost_per_token', tier)
+    cost += raw['output_tokens'] * tier_rate(m, 'output_cost_per_token', tier)
+    cost += cache_read * tier_rate(m, 'cache_read_input_token_cost', tier, 0)
+    cost += cache_5m * tier_rate(m, 'cache_creation_input_token_cost', tier, 0)
+    cost += cache_1h * tier_rate(m, 'cache_creation_input_token_cost_above_1hr', tier, 0)
     return cost
 
 # %% ../nbs/04_anthropic.ipynb #f7c0b989
